@@ -151,9 +151,6 @@ training_args = TrainingArguments(
     num_train_epochs=3,
     per_device_train_batch_size=8,  # Default from run.py
     per_device_eval_batch_size=8,
-    evaluation_strategy="epoch",  # Evaluate after each epoch
-    save_strategy="epoch",
-    logging_steps=100,
     do_train=True,
     do_eval=True,
 )
