@@ -29,7 +29,7 @@ class DataCollatorWithHypothesis:
         return batch
 
 # Load the bias model (hypothesis-only)
-bias_model_path = './trained_model'  # Path to hypothesis-only model
+bias_model_path = '/content/drive/MyDrive/nli_models/hypothesis_only_model'  # Path to hypothesis-only model
 bias_model = AutoModelForSequenceClassification.from_pretrained(bias_model_path)
 bias_model.eval()  # Set to eval mode
 for param in bias_model.parameters():
@@ -123,7 +123,7 @@ eval_dataset = dataset['validation'].map(
 )
 
 training_args = TrainingArguments(
-    output_dir='./debiased_model',
+    output_dir='./content/drive/MyDrive/nli_models/debiased_model',
     num_train_epochs=3,
     per_device_train_batch_size=8,  # Default from run.py
     do_train=True,
