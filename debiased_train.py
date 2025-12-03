@@ -14,8 +14,8 @@ class DataCollatorWithHypothesis:
     tokenizer: Any
     
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
-        # Separate hypothesis texts from other features
-        hypothesis_texts = [f.pop('hypothesis_text') for f in features]
+        # Separate hypothesis texts from other features (kept from original dataset)
+        hypothesis_texts = [f.pop('hypothesis') for f in features]
         
         # Use default collation for tensor fields
         batch = self.tokenizer.pad(
@@ -102,28 +102,18 @@ dataset = dataset.filter(lambda ex: ex['label'] != -1)
 
 # Prepare datasets (FULL premise+hypothesis for debiased model)
 # We need to keep the hypothesis text for the bias model
-def prepare_with_hypothesis(examples):
-    tokenized = prepare_dataset_nli(examples, tokenizer, 128, hypothesis_only=False)
-    # Keep the raw hypothesis text for re-tokenizing for bias model
-    tokenized['hypothesis_text'] = examples['hypothesis']
-    return tokenized
-
-# Store original column names before mapping
-original_train_columns = dataset['train'].column_names
-original_eval_columns = dataset['validation'].column_names
-
 train_dataset = dataset['train'].map(
-    prepare_with_hypothesis,
+    lambda exs: prepare_dataset_nli(exs, tokenizer, 128, hypothesis_only=False),
     batched=True,
-    num_proc=NUM_PREPROCESSING_WORKERS,  # From run.py
-    remove_columns=original_train_columns  # Only remove original columns, keep hypothesis_text
+    num_proc=NUM_PREPROCESSING_WORKERS,
+    remove_columns=['premise']  # Only remove premise, keep hypothesis for bias model
 )
 
 eval_dataset = dataset['validation'].map(
-    prepare_with_hypothesis,
+    lambda exs: prepare_dataset_nli(exs, tokenizer, 128, hypothesis_only=False),
     batched=True,
-    num_proc=NUM_PREPROCESSING_WORKERS,  # From run.py
-    remove_columns=original_eval_columns  # Only remove original columns, keep hypothesis_text
+    num_proc=NUM_PREPROCESSING_WORKERS,
+    remove_columns=['premise']  # Only remove premise, keep hypothesis for bias model
 )
 
 training_args = TrainingArguments(
