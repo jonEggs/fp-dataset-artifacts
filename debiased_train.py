@@ -14,15 +14,18 @@ class DataCollatorWithHypothesis:
     tokenizer: Any
     
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
-        # Extract hypothesis texts and remove string fields we don't need
-        hypothesis_texts = [f.pop('hypothesis') for f in features]
-        # Remove premise if it exists (we don't need it)
+        # Extract hypothesis texts before processing
+        hypothesis_texts = [f['hypothesis'] for f in features]
+        
+        # Create a clean feature dict for padding (only tensor fields)
+        clean_features = []
         for f in features:
-            f.pop('premise', None)
+            clean_f = {k: v for k, v in f.items() if k not in ['hypothesis', 'premise']}
+            clean_features.append(clean_f)
         
         # Use default collation for tensor fields
         batch = self.tokenizer.pad(
-            features,
+            clean_features,
             padding=True,
             return_tensors='pt'
         )
@@ -44,8 +47,7 @@ class DebiasedTrainer(Trainer):
         super().__init__(*args, **kwargs)
         self.bias_model = bias_model
         self.bias_weight = bias_weight
-        # Store tokenizer from parent class for hypothesis re-tokenization
-        # self.tokenizer is set by parent Trainer.__init__
+        # Move bias model to same device as main model
         
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         labels = inputs.pop("labels")
@@ -54,6 +56,10 @@ class DebiasedTrainer(Trainer):
         # Get predictions from main model (full premise+hypothesis)
         outputs = model(**inputs)
         main_logits = outputs.logits
+        
+        # Move bias model to same device if needed
+        if self.bias_model.device != main_logits.device:
+            self.bias_model = self.bias_model.to(main_logits.device)
         
         # Get predictions from bias model (hypothesis-only)
         with torch.no_grad():
@@ -108,28 +114,46 @@ dataset = dataset.filter(lambda ex: ex['label'] != -1)
 def prepare_with_hypothesis(examples):
     # Get tokenized features
     tokenized = prepare_dataset_nli(examples, tokenizer, 128, hypothesis_only=False)
-    # Explicitly add hypothesis text back for bias model
+    # Explicitly add hypothesis text back for bias model (keep as list)
     tokenized['hypothesis'] = examples['hypothesis']
+    tokenized['premise'] = examples['premise']  # Keep premise too in case needed
     return tokenized
 
+# Map datasets and set format to keep string columns
 train_dataset = dataset['train'].map(
     prepare_with_hypothesis,
     batched=True,
     num_proc=NUM_PREPROCESSING_WORKERS,
-    # Don't remove any columns - let the data collator handle it
 )
 
 eval_dataset = dataset['validation'].map(
     prepare_with_hypothesis,
     batched=True,
     num_proc=NUM_PREPROCESSING_WORKERS,
-    # Don't remove any columns - let the data collator handle it
+)
+
+# Set the dataset format to keep the hypothesis column
+# We specify which columns should be formatted as PyTorch tensors
+train_dataset.set_format(
+    type='torch',
+    columns=['input_ids', 'attention_mask', 'label'],
+    output_all_columns=True  # This keeps other columns like 'hypothesis' as regular Python objects
+)
+
+eval_dataset.set_format(
+    type='torch',
+    columns=['input_ids', 'attention_mask', 'label'],
+    output_all_columns=True
 )
 
 training_args = TrainingArguments(
-    output_dir='./content/drive/MyDrive/nli_models/debiased_model',
+    output_dir='./debiased_model',  # Fixed path - removed nested structure
     num_train_epochs=3,
     per_device_train_batch_size=8,  # Default from run.py
+    per_device_eval_batch_size=8,
+    evaluation_strategy="epoch",  # Evaluate after each epoch
+    save_strategy="epoch",
+    logging_steps=100,
     do_train=True,
     do_eval=True,
 )
@@ -147,5 +171,8 @@ trainer = DebiasedTrainer(
 )
 
 # Train and save (from run.py)
+print("Starting training...")
 trainer.train()
+print("Training complete. Saving model...")
 trainer.save_model()
+print("Model saved!")
