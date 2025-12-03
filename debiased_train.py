@@ -1,23 +1,41 @@
 import datasets
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, Trainer, TrainingArguments
+from transformers.data.data_collator import default_data_collator
 import torch
 import torch.nn.functional as F
 from helpers import prepare_dataset_nli, compute_accuracy
 
 NUM_PREPROCESSING_WORKERS = 2
 
-# Global cache for hypothesis texts (indexed by position in dataset)
+# Simple data collator that preserves idx field
+def data_collator_with_idx(features):
+    # Extract idx if present
+    if 'idx' in features[0]:
+        idx_list = [f.pop('idx') for f in features]
+    else:
+        idx_list = None
+    
+    # Use default collator for standard fields
+    batch = default_data_collator(features)
+    
+    # Add idx back if it existed
+    if idx_list is not None:
+        batch['idx'] = torch.tensor(idx_list, dtype=torch.long)
+    
+    return batch
+
+# Global cache for hypothesis texts
 train_hypotheses = []
 
 # Load the bias model (hypothesis-only)
-bias_model_path = '/content/drive/MyDrive/nli_models/hypothesis_only_model'  # CHANGE THIS PATH
+bias_model_path = '/content/drive/MyDrive/nli_models/hypothesis_only_model'  # CHANGE THIS
 print(f"Loading bias model from {bias_model_path}...")
 bias_model = AutoModelForSequenceClassification.from_pretrained(bias_model_path)
-bias_model.eval()  # Set to eval mode
+bias_model.eval()
 for param in bias_model.parameters():
-    param.requires_grad = False  # Freeze it
+    param.requires_grad = False
 
-# Custom Trainer that uses product of experts
+# Custom Trainer
 class DebiasedTrainer(Trainer):
     def __init__(self, *args, bias_model, bias_weight=1.0, train_hypotheses=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -25,44 +43,43 @@ class DebiasedTrainer(Trainer):
         self.bias_weight = bias_weight
         self.train_hypotheses = train_hypotheses
         
-        # Move bias model to same device as main model will be
-        if torch.cuda.is_available():
-            self.bias_model = self.bias_model.cuda()
-        
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         labels = inputs.pop("labels")
-        idx = inputs.pop("idx")  # Get the indices
-        batch_size = labels.shape[0]
+        idx = inputs.pop("idx", None)
         
-        # Get predictions from main model (full premise+hypothesis)
+        # Get predictions from main model
         outputs = model(**inputs)
         main_logits = outputs.logits
         
-        # Move bias model to same device if needed
+        # Move bias model to same device
         if self.bias_model.device != main_logits.device:
             self.bias_model = self.bias_model.to(main_logits.device)
         
-        # Get hypotheses for this batch using indices
-        batch_hypotheses = [self.train_hypotheses[i.item()] for i in idx]
-        
-        # Tokenize hypotheses on-the-fly
-        with torch.no_grad():
-            hyp_inputs = self.tokenizer(
-                batch_hypotheses,
-                truncation=True,
-                max_length=128,
-                padding='max_length',
-                return_tensors='pt'
-            ).to(main_logits.device)
+        # Get predictions from bias model (hypothesis-only)
+        if idx is not None and self.train_hypotheses is not None:
+            # Look up hypotheses using indices
+            batch_hypotheses = [self.train_hypotheses[i.item()] for i in idx]
             
-            bias_outputs = self.bias_model(**hyp_inputs)
-            bias_logits = bias_outputs.logits
+            # Tokenize hypothesis-only
+            with torch.no_grad():
+                hyp_inputs = self.tokenizer(
+                    batch_hypotheses,
+                    truncation=True,
+                    max_length=128,
+                    padding='max_length',
+                    return_tensors='pt'
+                ).to(main_logits.device)
+                
+                bias_outputs = self.bias_model(**hyp_inputs)
+                bias_logits = bias_outputs.logits
+        else:
+            # Fallback: use same inputs
+            with torch.no_grad():
+                bias_outputs = self.bias_model(**inputs)
+                bias_logits = bias_outputs.logits
         
-        # Product of Experts: combine logits
-        # Subtract bias model's confident predictions
+        # Product of Experts
         combined_logits = main_logits - self.bias_weight * bias_logits
-        
-        # Compute loss on combined logits
         loss = F.cross_entropy(combined_logits, labels)
         
         return (loss, outputs) if return_outputs else loss
@@ -71,51 +88,51 @@ class DebiasedTrainer(Trainer):
 print("Loading dataset...")
 dataset = datasets.load_dataset('snli')
 
-# Initialize tokenizer and model
 print("Loading tokenizer and models...")
 tokenizer = AutoTokenizer.from_pretrained('google/electra-small-discriminator', use_fast=True)
 model = AutoModelForSequenceClassification.from_pretrained(
-    'google/electra-small-discriminator', 
+    'google/electra-small-discriminator',
     num_labels=3
 )
 
-# Make tensor contiguous if needed
 if hasattr(model, 'electra'):
     for param in model.electra.parameters():
         if not param.is_contiguous():
             param.data = param.data.contiguous()
 
-print("Preprocessing data...")
-# Remove SNLI examples with no label
+print("Preprocessing...")
 dataset = dataset.filter(lambda ex: ex['label'] != -1)
 
-# Cache hypotheses (we'll use them later if needed)
-print("Caching hypothesis texts...")
+# Cache hypotheses BEFORE filtering/mapping
+print("Caching hypotheses...")
 train_hypotheses = dataset['train']['hypothesis']
-print(f"Cached {len(train_hypotheses)} training hypotheses")
+print(f"Cached {len(train_hypotheses)} hypotheses")
 
-# Add index to dataset so we can look up hypotheses
-def add_index(examples, idx):
-    examples['idx'] = idx
-    return examples
+# Add index field
+print("Adding indices...")
+def add_idx(examples, indices):
+    return {'idx': indices}
 
-print("Adding indices to training data...")
 dataset['train'] = dataset['train'].map(
-    add_index,
+    add_idx,
     batched=True,
     with_indices=True
 )
 
-# Standard preprocessing (just like run.py)
-print("Tokenizing training data...")
+# Tokenize
+print("Tokenizing...")
+def prepare_with_idx(examples):
+    tokenized = prepare_dataset_nli(examples, tokenizer, 128, hypothesis_only=False)
+    tokenized['idx'] = examples['idx']
+    return tokenized
+
 train_dataset = dataset['train'].map(
-    lambda exs: prepare_dataset_nli(exs, tokenizer, 128, hypothesis_only=False),
+    prepare_with_idx,
     batched=True,
     num_proc=NUM_PREPROCESSING_WORKERS,
-    remove_columns=[col for col in dataset['train'].column_names if col != 'idx']  # Keep idx
+    remove_columns=[c for c in dataset['train'].column_names if c != 'idx']
 )
 
-print("Tokenizing validation data...")
 eval_dataset = dataset['validation'].map(
     lambda exs: prepare_dataset_nli(exs, tokenizer, 128, hypothesis_only=False),
     batched=True,
@@ -126,9 +143,7 @@ eval_dataset = dataset['validation'].map(
 training_args = TrainingArguments(
     output_dir='./debiased_model',
     num_train_epochs=3,
-    per_device_train_batch_size=8,
-    do_train=True,
-    do_eval=True,
+    per_device_train_batch_size=8
 )
 
 print("Initializing trainer...")
@@ -138,20 +153,15 @@ trainer = DebiasedTrainer(
     train_dataset=train_dataset,
     eval_dataset=eval_dataset,
     tokenizer=tokenizer,
+    data_collator=data_collator_with_idx,  # Custom collator for idx
     compute_metrics=compute_accuracy,
     bias_model=bias_model,
-    bias_weight=1.0,  # Tune this: try 0.5, 1.0, 2.0
+    bias_weight=1.0,
     train_hypotheses=train_hypotheses
 )
 
-# Train and save
-print("Starting training...")
-print(f"Training on {len(train_dataset)} examples")
-print(f"Batch size: {training_args.per_device_train_batch_size}")
-print(f"Bias weight: {trainer.bias_weight}")
-print("\nUsing index-based hypothesis lookup (proper debiasing)")
-print("Tokenizing hypotheses on-the-fly during training\n")
+print("\nStarting training with proper hypothesis-only debiasing...")
 trainer.train()
-print("Training complete. Saving model...")
+print("Saving...")
 trainer.save_model()
-print("Model saved to ./debiased_model/")
+print("Done!")
