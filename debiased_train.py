@@ -1,10 +1,34 @@
 import datasets
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, Trainer, TrainingArguments
+from transformers import DataCollatorWithPadding
 import torch
 import torch.nn.functional as F
 from helpers import prepare_dataset_nli, compute_accuracy
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
 NUM_PREPROCESSING_WORKERS = 2
+
+# Minimal custom collator - just preserves the extra hyp_* fields
+@dataclass
+class DataCollatorForDebiasing(DataCollatorWithPadding):
+    """
+    Simple data collator that preserves hypothesis-only fields.
+    Extends the default collator to handle our extra fields.
+    """
+    def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
+        # Separate out the hypothesis fields
+        hyp_input_ids = [f.pop('hyp_input_ids') for f in features]
+        hyp_attention_mask = [f.pop('hyp_attention_mask') for f in features]
+        
+        # Use parent class to handle the main fields (input_ids, attention_mask, labels)
+        batch = super().__call__(features)
+        
+        # Add hypothesis fields back as tensors
+        batch['hyp_input_ids'] = torch.tensor(hyp_input_ids, dtype=torch.long)
+        batch['hyp_attention_mask'] = torch.tensor(hyp_attention_mask, dtype=torch.long)
+        
+        return batch
 
 # Load the bias model (hypothesis-only)
 bias_model_path = '/content/drive/MyDrive/nli_models/hypothesis_only_model'  # CHANGE THIS PATH
@@ -114,9 +138,15 @@ training_args = TrainingArguments(
     num_train_epochs=3,
     per_device_train_batch_size=8,
     per_device_eval_batch_size=8,
+    evaluation_strategy="epoch",
+    save_strategy="epoch",
+    logging_steps=100,
     do_train=True,
     do_eval=True,
 )
+
+# Create the custom data collator
+data_collator = DataCollatorForDebiasing(tokenizer=tokenizer, padding=True)
 
 print("Initializing trainer...")
 trainer = DebiasedTrainer(
@@ -125,6 +155,7 @@ trainer = DebiasedTrainer(
     train_dataset=train_dataset,
     eval_dataset=eval_dataset,
     tokenizer=tokenizer,
+    data_collator=data_collator,  # Use our custom collator
     compute_metrics=compute_accuracy,
     bias_model=bias_model,
     bias_weight=1.0,  # Tune this: try 0.5, 1.0, 2.0
