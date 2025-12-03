@@ -108,18 +108,22 @@ def prepare_with_hypothesis(examples):
     tokenized['hypothesis_text'] = examples['hypothesis']
     return tokenized
 
+# Store original column names before mapping
+original_train_columns = dataset['train'].column_names
+original_eval_columns = dataset['validation'].column_names
+
 train_dataset = dataset['train'].map(
     prepare_with_hypothesis,
     batched=True,
     num_proc=NUM_PREPROCESSING_WORKERS,  # From run.py
-    remove_columns=dataset['train'].column_names
+    remove_columns=original_train_columns  # Only remove original columns, keep hypothesis_text
 )
 
 eval_dataset = dataset['validation'].map(
     prepare_with_hypothesis,
     batched=True,
     num_proc=NUM_PREPROCESSING_WORKERS,  # From run.py
-    remove_columns=dataset['validation'].column_names
+    remove_columns=original_eval_columns  # Only remove original columns, keep hypothesis_text
 )
 
 training_args = TrainingArguments(
