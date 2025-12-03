@@ -3,39 +3,12 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification, Trai
 import torch
 import torch.nn.functional as F
 from helpers import prepare_dataset_nli, compute_accuracy
-from dataclasses import dataclass
-from typing import Any, Dict, List
 
-NUM_PREPROCESSING_WORKERS = 2  # From run.py
-
-# Custom data collator that preserves hypothesis text for bias model
-@dataclass
-class DataCollatorWithHypothesis:
-    tokenizer: Any
-    
-    def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
-        # Extract hypothesis texts before processing
-        hypothesis_texts = [f['hypothesis'] for f in features]
-        
-        # Create a clean feature dict for padding (only tensor fields)
-        clean_features = []
-        for f in features:
-            clean_f = {k: v for k, v in f.items() if k not in ['hypothesis', 'premise']}
-            clean_features.append(clean_f)
-        
-        # Use default collation for tensor fields
-        batch = self.tokenizer.pad(
-            clean_features,
-            padding=True,
-            return_tensors='pt'
-        )
-        
-        # Add hypothesis texts back (as list of strings)
-        batch['hypothesis_text'] = hypothesis_texts
-        return batch
+NUM_PREPROCESSING_WORKERS = 2
 
 # Load the bias model (hypothesis-only)
-bias_model_path = '/content/drive/MyDrive/nli_models/hypothesis_only_model'  # Path to hypothesis-only model
+bias_model_path = '/content/drive/MyDrive/nli_models/hypothesis_only_model'  # CHANGE THIS PATH
+print(f"Loading bias model from {bias_model_path}...")
 bias_model = AutoModelForSequenceClassification.from_pretrained(bias_model_path)
 bias_model.eval()  # Set to eval mode
 for param in bias_model.parameters():
@@ -47,11 +20,13 @@ class DebiasedTrainer(Trainer):
         super().__init__(*args, **kwargs)
         self.bias_model = bias_model
         self.bias_weight = bias_weight
-        # Move bias model to same device as main model
         
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         labels = inputs.pop("labels")
-        hypothesis_texts = inputs.pop("hypothesis_text", None)
+        
+        # Extract hypothesis-only inputs (we added these during preprocessing)
+        hyp_input_ids = inputs.pop("hyp_input_ids")
+        hyp_attention_mask = inputs.pop("hyp_attention_mask")
         
         # Get predictions from main model (full premise+hypothesis)
         outputs = model(**inputs)
@@ -63,19 +38,10 @@ class DebiasedTrainer(Trainer):
         
         # Get predictions from bias model (hypothesis-only)
         with torch.no_grad():
-            if hypothesis_texts is not None:
-                # Re-tokenize hypothesis-only for the bias model
-                hypothesis_inputs = self.tokenizer(
-                    hypothesis_texts,
-                    truncation=True,
-                    max_length=128,
-                    padding='max_length',
-                    return_tensors='pt'
-                ).to(main_logits.device)
-                bias_outputs = self.bias_model(**hypothesis_inputs)
-            else:
-                # Fallback: use same inputs (less accurate debiasing)
-                bias_outputs = self.bias_model(**inputs)
+            bias_outputs = self.bias_model(
+                input_ids=hyp_input_ids,
+                attention_mask=hyp_attention_mask
+            )
             bias_logits = bias_outputs.logits
         
         # Product of Experts: combine logits
@@ -88,88 +54,91 @@ class DebiasedTrainer(Trainer):
         return (loss, outputs) if return_outputs else loss
 
 # Main training
-# Load dataset (from run.py)
+print("Loading dataset...")
 dataset = datasets.load_dataset('snli')
 
-# Initialize tokenizer and model (from run.py)
+# Initialize tokenizer and model
+print("Loading tokenizer and models...")
 tokenizer = AutoTokenizer.from_pretrained('google/electra-small-discriminator', use_fast=True)
 model = AutoModelForSequenceClassification.from_pretrained(
     'google/electra-small-discriminator', 
     num_labels=3
 )
 
-# Make tensor contiguous if needed (from run.py lines 84-88)
+# Make tensor contiguous if needed
 if hasattr(model, 'electra'):
     for param in model.electra.parameters():
         if not param.is_contiguous():
             param.data = param.data.contiguous()
 
-print("Preprocessing data... (this takes a little bit, should only happen once per dataset)")
-
-# Remove SNLI examples with no label (from run.py lines 104-105)
+print("Preprocessing data...")
+# Remove SNLI examples with no label
 dataset = dataset.filter(lambda ex: ex['label'] != -1)
 
-# Prepare datasets (FULL premise+hypothesis for debiased model)
-# We need to keep the hypothesis text for the bias model
-def prepare_with_hypothesis(examples):
-    # Get tokenized features
-    tokenized = prepare_dataset_nli(examples, tokenizer, 128, hypothesis_only=False)
-    # Explicitly add hypothesis text back for bias model (keep as list)
-    tokenized['hypothesis'] = examples['hypothesis']
-    tokenized['premise'] = examples['premise']  # Keep premise too in case needed
-    return tokenized
+# SIMPLE APPROACH: Tokenize BOTH versions during preprocessing
+def prepare_dual_dataset(examples):
+    # Tokenize premise+hypothesis for main model
+    main_tokenized = prepare_dataset_nli(examples, tokenizer, 128, hypothesis_only=False)
+    
+    # Tokenize hypothesis-only for bias model
+    hyp_tokenized = prepare_dataset_nli(examples, tokenizer, 128, hypothesis_only=True)
+    
+    # Combine both - prefix hypothesis-only fields with 'hyp_'
+    combined = {
+        'input_ids': main_tokenized['input_ids'],
+        'attention_mask': main_tokenized['attention_mask'],
+        'label': main_tokenized['label'],
+        'hyp_input_ids': hyp_tokenized['input_ids'],
+        'hyp_attention_mask': hyp_tokenized['attention_mask'],
+    }
+    return combined
 
-# Map datasets and set format to keep string columns
+print("Tokenizing training data (both versions)...")
 train_dataset = dataset['train'].map(
-    prepare_with_hypothesis,
+    prepare_dual_dataset,
     batched=True,
     num_proc=NUM_PREPROCESSING_WORKERS,
+    remove_columns=dataset['train'].column_names
 )
 
+print("Tokenizing validation data (both versions)...")
 eval_dataset = dataset['validation'].map(
-    prepare_with_hypothesis,
+    prepare_dual_dataset,
     batched=True,
     num_proc=NUM_PREPROCESSING_WORKERS,
-)
-
-# Set the dataset format to keep the hypothesis column
-# We specify which columns should be formatted as PyTorch tensors
-train_dataset.set_format(
-    type='torch',
-    columns=['input_ids', 'attention_mask', 'label'],
-    output_all_columns=True  # This keeps other columns like 'hypothesis' as regular Python objects
-)
-
-eval_dataset.set_format(
-    type='torch',
-    columns=['input_ids', 'attention_mask', 'label'],
-    output_all_columns=True
+    remove_columns=dataset['validation'].column_names
 )
 
 training_args = TrainingArguments(
-    output_dir='./debiased_model',  # Fixed path - removed nested structure
+    output_dir='./debiased_model',
     num_train_epochs=3,
-    per_device_train_batch_size=8,  # Default from run.py
+    per_device_train_batch_size=8,
     per_device_eval_batch_size=8,
+    evaluation_strategy="epoch",
+    save_strategy="epoch",
+    logging_steps=100,
     do_train=True,
     do_eval=True,
 )
 
+print("Initializing trainer...")
 trainer = DebiasedTrainer(
     model=model,
     args=training_args,
     train_dataset=train_dataset,
     eval_dataset=eval_dataset,
     tokenizer=tokenizer,
-    data_collator=DataCollatorWithHypothesis(tokenizer=tokenizer),  # Custom collator to preserve hypothesis text
     compute_metrics=compute_accuracy,
     bias_model=bias_model,
-    bias_weight=1.0  # Tune this: try 0.5, 1.0, 2.0
+    bias_weight=1.0,  # Tune this: try 0.5, 1.0, 2.0
 )
 
-# Train and save (from run.py)
+# Train and save
 print("Starting training...")
+print(f"Training on {len(train_dataset)} examples")
+print(f"Batch size: {training_args.per_device_train_batch_size}")
+print(f"Bias weight: {trainer.bias_weight}")
 trainer.train()
 print("Training complete. Saving model...")
 trainer.save_model()
-print("Model saved!")
+print("Model saved to ./debiased_model/")
