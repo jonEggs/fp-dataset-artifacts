@@ -102,18 +102,25 @@ dataset = dataset.filter(lambda ex: ex['label'] != -1)
 
 # Prepare datasets (FULL premise+hypothesis for debiased model)
 # We need to keep the hypothesis text for the bias model
+def prepare_with_hypothesis(examples):
+    # Get tokenized features
+    tokenized = prepare_dataset_nli(examples, tokenizer, 128, hypothesis_only=False)
+    # Add hypothesis text back for bias model
+    tokenized['hypothesis'] = examples['hypothesis']
+    return tokenized
+
 train_dataset = dataset['train'].map(
-    lambda exs: prepare_dataset_nli(exs, tokenizer, 128, hypothesis_only=False),
+    prepare_with_hypothesis,
     batched=True,
     num_proc=NUM_PREPROCESSING_WORKERS,
-    remove_columns=['premise']  # Only remove premise, keep hypothesis for bias model
+    remove_columns=['premise']  # Only remove premise, keep hypothesis
 )
 
 eval_dataset = dataset['validation'].map(
-    lambda exs: prepare_dataset_nli(exs, tokenizer, 128, hypothesis_only=False),
+    prepare_with_hypothesis,
     batched=True,
     num_proc=NUM_PREPROCESSING_WORKERS,
-    remove_columns=['premise']  # Only remove premise, keep hypothesis for bias model
+    remove_columns=['premise']  # Only remove premise, keep hypothesis
 )
 
 training_args = TrainingArguments(
