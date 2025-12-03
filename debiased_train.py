@@ -14,8 +14,11 @@ class DataCollatorWithHypothesis:
     tokenizer: Any
     
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
-        # Separate hypothesis texts from other features (kept from original dataset)
+        # Extract hypothesis texts and remove string fields we don't need
         hypothesis_texts = [f.pop('hypothesis') for f in features]
+        # Remove premise if it exists (we don't need it)
+        for f in features:
+            f.pop('premise', None)
         
         # Use default collation for tensor fields
         batch = self.tokenizer.pad(
@@ -105,7 +108,7 @@ dataset = dataset.filter(lambda ex: ex['label'] != -1)
 def prepare_with_hypothesis(examples):
     # Get tokenized features
     tokenized = prepare_dataset_nli(examples, tokenizer, 128, hypothesis_only=False)
-    # Add hypothesis text back for bias model
+    # Explicitly add hypothesis text back for bias model
     tokenized['hypothesis'] = examples['hypothesis']
     return tokenized
 
@@ -113,14 +116,14 @@ train_dataset = dataset['train'].map(
     prepare_with_hypothesis,
     batched=True,
     num_proc=NUM_PREPROCESSING_WORKERS,
-    remove_columns=['premise']  # Only remove premise, keep hypothesis
+    # Don't remove any columns - let the data collator handle it
 )
 
 eval_dataset = dataset['validation'].map(
     prepare_with_hypothesis,
     batched=True,
     num_proc=NUM_PREPROCESSING_WORKERS,
-    remove_columns=['premise']  # Only remove premise, keep hypothesis
+    # Don't remove any columns - let the data collator handle it
 )
 
 training_args = TrainingArguments(
