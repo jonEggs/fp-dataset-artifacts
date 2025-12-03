@@ -137,10 +137,6 @@ training_args = TrainingArguments(
     output_dir='./debiased_model',
     num_train_epochs=3,
     per_device_train_batch_size=8,
-    per_device_eval_batch_size=8,
-    evaluation_strategy="epoch",
-    save_strategy="epoch",
-    logging_steps=100,
     do_train=True,
     do_eval=True,
 )
