@@ -172,8 +172,8 @@ eval_dataset.set_format(
 bias_coefficient = 0.3 # Define bias coefficient once
 training_args = TrainingArguments(
     output_dir=f'/content/drive/MyDrive/nli_models/debiased_reweight_model_{bias_coefficient}',
-    num_train_epochs=3,
-    per_device_train_batch_size=16,
+    num_train_epochs=1,
+    per_device_train_batch_size=32,
     logging_steps=10000,
     remove_unused_columns=False
 )
