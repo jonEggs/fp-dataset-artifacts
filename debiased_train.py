@@ -1,3 +1,9 @@
+
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument('--bias_const', type=float, default=1.0, help='Bias downweighting constant')
+args = parser.parse_args()
+
 import datasets
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, Trainer, TrainingArguments
 from transformers.data.data_collator import default_data_collator
@@ -182,12 +188,13 @@ eval_dataset.set_format(
     columns=['input_ids', 'attention_mask', 'label', 'hyp_input_ids', 'hyp_attention_mask']
 )
 
-BIAS_CONST = 1.0 # Define how aggressively to downweight examples that hypoth only model is confident on.
+
 training_args = TrainingArguments(
-    output_dir=f'/content/drive/MyDrive/nli_models/debiased_reweight_model_{BIAS_CONST}',
+    output_dir=f'/content/drive/MyDrive/nli_models/debiased_reweight_model_{args.bias_const}',
     num_train_epochs=1,
     per_device_train_batch_size=32,
     logging_steps=10000,
+    save_steps=10000,
     remove_unused_columns=False
 )
 
@@ -201,7 +208,7 @@ trainer = DebiasedTrainer(
     data_collator=data_collator_with_hyp,
     compute_metrics=compute_accuracy,
     bias_model=bias_model,
-    bias_weight=BIAS_CONST
+    bias_weight=args.bias_const
 )
 
 print("\nStarting training with proper hypothesis-only debiasing...")
