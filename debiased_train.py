@@ -162,7 +162,7 @@ eval_dataset = dataset['validation'].map(
 
 bias_coefficient = 0.5 # Define bias coefficient once
 training_args = TrainingArguments(
-    output_dir=f'./debiased_model_{bias_coefficient}',
+    output_dir=f'/content/drive/MyDrive/nli_models/debiased_model_{bias_coefficient}',,
     num_train_epochs=2.5,
     per_device_train_batch_size=8
 )
