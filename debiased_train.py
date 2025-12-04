@@ -9,17 +9,28 @@ NUM_PREPROCESSING_WORKERS = 2
 
 def data_collator_with_hyp(features):
     """Collate main inputs + separate hypothesis inputs"""
-    # Extract hypothesis-only fields
-    hyp_input_ids = [f.pop('hyp_input_ids') for f in features]
-    hyp_attention_mask = [f.pop('hyp_attention_mask') for f in features]
-    
+    # Debug: Print features to inspect missing keys
+    for idx, f in enumerate(features):
+        if 'hyp_input_ids' not in f:
+            print(f"[DEBUG] Feature at index {idx} missing 'hyp_input_ids': {f}")
+        if 'hyp_attention_mask' not in f:
+            print(f"[DEBUG] Feature at index {idx} missing 'hyp_attention_mask': {f}")
+
+    try:
+        hyp_input_ids = [f.pop('hyp_input_ids') for f in features]
+        hyp_attention_mask = [f.pop('hyp_attention_mask') for f in features]
+    except KeyError as e:
+        print(f"[ERROR] KeyError in data_collator_with_hyp: {e}")
+        print(f"[ERROR] Features: {features}")
+        raise
+
     # Use default collator for main fields
     batch = default_data_collator(features)
-    
+
     # Add hypothesis fields back as tensors
     batch['hyp_input_ids'] = torch.tensor(hyp_input_ids, dtype=torch.long)
     batch['hyp_attention_mask'] = torch.tensor(hyp_attention_mask, dtype=torch.long)
-    
+
     return batch
 
 # Load the bias model
@@ -119,14 +130,20 @@ def prepare_both_inputs(examples):
         max_length=128,
         padding='max_length'
     )
-    
-    return {
+
+    result = {
         'input_ids': main_tok['input_ids'],
         'attention_mask': main_tok['attention_mask'],
         'label': examples['label'],
         'hyp_input_ids': hyp_tok['input_ids'],
         'hyp_attention_mask': hyp_tok['attention_mask'],
     }
+    
+    # DEBUG: Print once
+    if len(examples['premise']) > 0 and examples['premise'][0].startswith('A'):
+        print(f"prepare_both_inputs returning keys: {result.keys()}")
+    
+    return result
 
 print("Tokenizing train set...")
 train_dataset = dataset['train'].map(
@@ -136,12 +153,33 @@ train_dataset = dataset['train'].map(
     remove_columns=dataset['train'].column_names
 )
 
+# Explicitly set which columns to keep and convert to torch
+train_dataset.set_format(
+    type='torch', 
+    columns=['input_ids', 'attention_mask', 'label', 'hyp_input_ids', 'hyp_attention_mask']
+)
+
+# Verify
+print(f"Format: {train_dataset.format}")
+print(f"Columns: {train_dataset.column_names}")
+
+# DEBUG: Verify columns exist
+print(f"Columns after map: {train_dataset.column_names}")
+print(f"First example keys: {train_dataset[0].keys()}")
+print(f"hyp_input_ids sample: {train_dataset[0]['hyp_input_ids'][:10]}")
+
 print("Tokenizing validation set...")
 eval_dataset = dataset['validation'].map(
     prepare_both_inputs,
     batched=True,
     num_proc=NUM_PREPROCESSING_WORKERS,
     remove_columns=dataset['validation'].column_names
+)
+
+# Explicitly set which columns to keep and convert to torch
+eval_dataset.set_format(
+    type='torch', 
+    columns=['input_ids', 'attention_mask', 'label', 'hyp_input_ids', 'hyp_attention_mask']
 )
 
 bias_coefficient = 0.5 # Define bias coefficient once
