@@ -152,12 +152,16 @@ def main():
                 hans_dataset = datasets.load_dataset('SebastiaanBeekman/hans', split='test')
                 # Map SebastiaanBeekman/hans columns to expected NLI columns
                 def map_hans_columns(example):
-                    # 'input' is a string like 'Premise: ... . Hypothesis: ... .'
+                    # Debug: print the raw example
+                    print("[DEBUG] Raw HANS example:", example)
                     input_str = example['input']
                     # Extract premise and hypothesis using known prefixes
                     premise = input_str.split('Premise: ')[1].split(' . Hypothesis: ')[0].strip()
                     hypothesis = input_str.split(' . Hypothesis: ')[1].strip()
                     label = 0 if example['reference'] == 0 else 2
+                    print(f"[DEBUG] Parsed premise: {premise}")
+                    print(f"[DEBUG] Parsed hypothesis: {hypothesis}")
+                    print(f"[DEBUG] Parsed label: {label}")
                     return {'premise': premise, 'hypothesis': hypothesis, 'label': label}
                 eval_dataset = hans_dataset.map(map_hans_columns)
                 print("Loaded HANS test set with mapped columns and labels")
