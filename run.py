@@ -49,6 +49,8 @@ def main():
                       help='Limit the number of examples to evaluate on.')
     argp.add_argument('--hypothesis_only', action='store_true',
                       help='If set, train/evaluate NLI models using only the hypothesis text (omit the premise).')
+    argp.add_argument('--eval_dataset', type=str, default=None,
+                      help='Override the evaluation dataset. For ANLI, use "anli" to eval on all rounds, or "anli:r1", "anli:r2", "anli:r3" for specific rounds.')
 
     training_args, args = argp.parse_args_into_dataclasses()
 
@@ -122,7 +124,32 @@ def main():
             remove_columns=train_dataset.column_names
         )
     if training_args.do_eval:
-        eval_dataset = dataset[eval_split]
+        # Check if we should use ANLI for evaluation
+        if args.eval_dataset is not None and args.eval_dataset.startswith('anli'):
+            print(f"Loading ANLI evaluation dataset: {args.eval_dataset}")
+            parts = args.eval_dataset.split(':')
+            anli_dataset = datasets.load_dataset('facebook/anli')
+            
+            if len(parts) == 1:
+                # Load all ANLI rounds combined
+                from datasets import Dataset
+                eval_dataset = datasets.concatenate_datasets([
+                    anli_dataset['test_r1'],  # type: ignore
+                    anli_dataset['test_r2'],  # type: ignore
+                    anli_dataset['test_r3']   # type: ignore
+                ])
+                print("Loaded ANLI test sets (all rounds combined)")
+            elif len(parts) == 2 and parts[1] in ['r1', 'r2', 'r3']:
+                # Load specific round
+                round_num = parts[1]
+                eval_dataset = anli_dataset[f'test_{round_num}']
+                print(f"Loaded ANLI test set (round {round_num})")
+            else:
+                raise ValueError(f"Invalid ANLI specification: {args.eval_dataset}. Use 'anli', 'anli:r1', 'anli:r2', or 'anli:r3'")
+        else:
+            # Use the same dataset as training
+            eval_dataset = dataset[eval_split]
+        
         if args.max_eval_samples:
             eval_dataset = eval_dataset.select(range(args.max_eval_samples))
         eval_dataset_featurized = eval_dataset.map(
