@@ -5,8 +5,6 @@ import torch
 import torch.nn.functional as F
 from helpers import compute_accuracy
 
-NUM_PREPROCESSING_WORKERS = 2
-
 def data_collator_with_hyp(features):
     """Collate main inputs + separate hypothesis inputs"""
     # Debug: Print features to inspect missing keys
@@ -149,7 +147,7 @@ print("Tokenizing train set...")
 train_dataset = dataset['train'].map(
     prepare_both_inputs,
     batched=True,
-    num_proc=NUM_PREPROCESSING_WORKERS,
+    num_proc=1,
     remove_columns=dataset['train'].column_names
 )
 
@@ -172,7 +170,7 @@ print("Tokenizing validation set...")
 eval_dataset = dataset['validation'].map(
     prepare_both_inputs,
     batched=True,
-    num_proc=NUM_PREPROCESSING_WORKERS,
+    num_proc=1,
     remove_columns=dataset['validation'].column_names
 )
 
@@ -187,7 +185,8 @@ training_args = TrainingArguments(
     output_dir=f'/content/drive/MyDrive/nli_models/debiased_model_{bias_coefficient}',
     num_train_epochs=0.1,
     per_device_train_batch_size=16,
-    logging_steps=10000
+    logging_steps=10000,
+    remove_unused_columns=False
 )
 
 print("Initializing trainer...")
