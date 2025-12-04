@@ -61,12 +61,7 @@ class DebiasedTrainer(Trainer):
         # Get bias model's confidence (frozen, no gradients)
         if self.bias_model.device != main_logits.device:
             self.bias_model = self.bias_model.to(main_logits.device)
-        with torch.no_grad():
-            test_outputs = self.bias_model(
-                input_ids=hyp_input_ids[:5],
-                attention_mask=hyp_attention_mask[:5]
-            )
-            print("Bias model predictions:", test_outputs.logits.argmax(dim=-1))
+        
         with torch.no_grad():
             bias_logits = self.bias_model(
                 input_ids=hyp_input_ids,
@@ -85,7 +80,7 @@ class DebiasedTrainer(Trainer):
         loss = (example_weights * ce_loss).mean()
         
         # Right before computing loss, add:
-        if self.state.global_step % 100 == 0:  # Log every 100 steps
+        if self.state.global_step % 2000 == 0:  # Log every 100 steps
             print(f"\n=== Step {self.state.global_step} ===")
             print(f"Bias confidence - Min: {bias_confidence.min():.3f}, "
                 f"Mean: {bias_confidence.mean():.3f}, Max: {bias_confidence.max():.3f}")
@@ -93,6 +88,9 @@ class DebiasedTrainer(Trainer):
                 f"Mean: {example_weights.mean():.3f}, Max: {example_weights.max():.3f}")
             print(f"% heavily downweighted (<0.1): {(example_weights < 0.1).float().mean():.1%}")
             print(f"Weighted loss: {loss.item():.4f}")
+            unweighted_loss = ce_loss.mean()
+            print(f"UNWEIGHTED loss: {unweighted_loss.item():.4f}")
+
         return (loss, outputs) if return_outputs else loss
 
 # Main training
@@ -184,7 +182,7 @@ eval_dataset.set_format(
     columns=['input_ids', 'attention_mask', 'label', 'hyp_input_ids', 'hyp_attention_mask']
 )
 
-BIAS_CONST = 0.5 # Define how aggressively to downweight examples that hypoth only model is confident on.
+BIAS_CONST = 1.0 # Define how aggressively to downweight examples that hypoth only model is confident on.
 training_args = TrainingArguments(
     output_dir=f'/content/drive/MyDrive/nli_models/debiased_reweight_model_{BIAS_CONST}',
     num_train_epochs=1,
