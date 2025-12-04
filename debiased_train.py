@@ -47,7 +47,11 @@ class DebiasedTrainer(Trainer):
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         labels = inputs.pop("labels")
         idx = inputs.pop("idx", None)
-        
+
+        # DEBUG: Check if idx is actually present
+        if idx is None:
+            print("WARNING: idx is None! Falling back to wrong behavior!")
+            
         # Get predictions from main model
         outputs = model(**inputs)
         main_logits = outputs.logits
@@ -89,6 +93,15 @@ class DebiasedTrainer(Trainer):
                 bias_outputs = self.bias_model(**inputs)
                 bias_logits = bias_outputs.logits
         
+        # DEBUG: Print these during first few batches
+        if self.state.global_step < 3:
+            print(f"Step {self.state.global_step}")
+            print(f"  idx present: {idx is not None}")
+            print(f"  bias_logits[0]: {bias_logits[0].tolist()}")
+            print(f"  main_logits[0]: {main_logits[0].tolist()}")
+            print(f"  combined_logits[0]: {combined_logits[0].tolist()}")
+            print(f"  label[0]: {labels[0].item()}")
+
         # Product of Experts
         combined_logits = main_logits - self.bias_weight * bias_logits
         loss = F.cross_entropy(combined_logits, labels)
