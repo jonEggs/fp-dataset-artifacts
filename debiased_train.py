@@ -184,7 +184,7 @@ eval_dataset.set_format(
     columns=['input_ids', 'attention_mask', 'label', 'hyp_input_ids', 'hyp_attention_mask']
 )
 
-BIAS_COEFFICIENT = 5.0 # Define how aggressively to downweight examples that hypoth only model is confident on.
+BIAS_CONST = 0.5 # Define how aggressively to downweight examples that hypoth only model is confident on.
 training_args = TrainingArguments(
     output_dir=f'/content/drive/MyDrive/nli_models/debiased_reweight_model_{BIAS_COEFFICIENT}',
     num_train_epochs=1,
