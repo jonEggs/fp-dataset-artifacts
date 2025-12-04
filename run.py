@@ -169,9 +169,6 @@ def main():
                         label = 0 if ref.strip() == 'entailment' else 2
                     else:
                         label = 0 if ref == 0 else 2
-                    print(f"[DEBUG] Parsed premise: {premise}")
-                    print(f"[DEBUG] Parsed hypothesis: {hypothesis}")
-                    print(f"[DEBUG] Parsed label: {label}")
                     return {'premise': premise, 'hypothesis': hypothesis, 'label': label}
                 eval_dataset = hans_dataset.map(map_hans_columns)
                 print("Loaded HANS test set with mapped columns and labels")
