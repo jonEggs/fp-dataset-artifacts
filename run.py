@@ -149,7 +149,7 @@ def main():
             elif args.eval_dataset == 'hans':
                 hans_eval = True
                 print("Loading HANS evaluation dataset")
-                hans_dataset = datasets.load_dataset('hans', split='validation')
+                hans_dataset = datasets.load_dataset('SebastiaanBeekman/hans', split='validation')
                 # HANS labels: entailment (0), non-entailment (1)
                 # Map HANS labels to SNLI-style: 0=entailment, 2=contradiction (non-entailment)
                 def map_hans_labels(example):
