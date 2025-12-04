@@ -149,15 +149,18 @@ def main():
             elif args.eval_dataset == 'hans':
                 hans_eval = True
                 print("Loading HANS evaluation dataset")
-                hans_dataset = datasets.load_dataset('SebastiaanBeekman/hans', split='validation')
-                # HANS labels: entailment (0), non-entailment (1)
-                # Map HANS labels to SNLI-style: 0=entailment, 2=contradiction (non-entailment)
-                def map_hans_labels(example):
-                    mapped = dict(example)
-                    mapped['label'] = 0 if example['label'] == 0 else 2
-                    return mapped
-                eval_dataset = hans_dataset.map(map_hans_labels)
-                print("Loaded HANS validation set with mapped labels")
+                hans_dataset = datasets.load_dataset('SebastiaanBeekman/hans', split='test')
+                # Map SebastiaanBeekman/hans columns to expected NLI columns
+                def map_hans_columns(example):
+                    # 'input' is a string like 'Premise: ... . Hypothesis: ... .'
+                    input_str = example['input']
+                    # Extract premise and hypothesis using known prefixes
+                    premise = input_str.split('Premise: ')[1].split(' . Hypothesis: ')[0].strip()
+                    hypothesis = input_str.split(' . Hypothesis: ')[1].strip()
+                    label = 0 if example['reference'] == 0 else 2
+                    return {'premise': premise, 'hypothesis': hypothesis, 'label': label}
+                eval_dataset = hans_dataset.map(map_hans_columns)
+                print("Loaded HANS test set with mapped columns and labels")
             else:
                 # Use the same dataset as training
                 eval_dataset = dataset[eval_split]
