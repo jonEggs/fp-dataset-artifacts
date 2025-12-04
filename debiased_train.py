@@ -79,6 +79,11 @@ class DebiasedTrainer(Trainer):
         bias_weight = self.bias_weight
         example_weights = (1.0 - bias_confidence) ** bias_weight
 
+        
+        # Compute weighted loss
+        ce_loss = F.cross_entropy(main_logits, labels, reduction='none')
+        loss = (example_weights * ce_loss).mean()
+        
         # Right before computing loss, add:
         if self.state.global_step % 100 == 0:  # Log every 100 steps
             print(f"\n=== Step {self.state.global_step} ===")
@@ -88,10 +93,6 @@ class DebiasedTrainer(Trainer):
                 f"Mean: {example_weights.mean():.3f}, Max: {example_weights.max():.3f}")
             print(f"% heavily downweighted (<0.1): {(example_weights < 0.1).float().mean():.1%}")
             print(f"Weighted loss: {loss.item():.4f}")
-        # Compute weighted loss
-        ce_loss = F.cross_entropy(main_logits, labels, reduction='none')
-        loss = (example_weights * ce_loss).mean()
-        
         return (loss, outputs) if return_outputs else loss
 
 # Main training
