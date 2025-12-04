@@ -169,7 +169,7 @@ eval_dataset.set_format(
     columns=['input_ids', 'attention_mask', 'label', 'hyp_input_ids', 'hyp_attention_mask']
 )
 
-bias_coefficient = 0.5 # Define bias coefficient once
+bias_coefficient = 0.3 # Define bias coefficient once
 training_args = TrainingArguments(
     output_dir=f'/content/drive/MyDrive/nli_models/debiased_model_{bias_coefficient}',
     num_train_epochs=3,
