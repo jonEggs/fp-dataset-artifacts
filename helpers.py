@@ -45,6 +45,14 @@ def compute_accuracy(eval_preds: EvalPrediction):
             np.float32).mean().item()
     }
 
+def compute_accuracy_hans(eval_preds: EvalPrediction):
+    # Group all predictions that are not 0 (entailment) as 2 (non-entailment)
+    preds = np.argmax(eval_preds.predictions, axis=1)
+    preds_grouped = np.where(preds == 0, 0, 2)
+    labels_grouped = np.where(eval_preds.label_ids == 0, 0, 2)
+    return {
+        'accuracy': (preds_grouped == labels_grouped).astype(np.float32).mean().item()
+    }
 
 # This function preprocesses a question answering dataset, tokenizing the question and context text
 # and finding the right offsets for the answer spans in the tokenized context (to use as labels).

@@ -3,7 +3,7 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification, \
     AutoModelForQuestionAnswering, Trainer, TrainingArguments, HfArgumentParser
 import evaluate
 from helpers import prepare_dataset_nli, prepare_train_dataset_qa, \
-    prepare_validation_dataset_qa, QuestionAnsweringTrainer, compute_accuracy
+    prepare_validation_dataset_qa, QuestionAnsweringTrainer, compute_accuracy, compute_accuracy_hans
 import os
 import json
 
@@ -169,7 +169,7 @@ def main():
                     else:
                         label = 0 if ref == 0 else 2
                     return {'premise': premise, 'hypothesis': hypothesis, 'label': label}
-                eval_dataset = hans_dataset.map(map_hans_columns).select(range(750))
+                eval_dataset = hans_dataset.map(map_hans_columns).select(range(250))
             else:
                 # Use the same dataset as training
                 eval_dataset = dataset[eval_split]
@@ -200,19 +200,9 @@ def main():
         compute_metrics = lambda eval_preds: metric.compute(
             predictions=eval_preds.predictions, references=eval_preds.label_ids)
     elif args.task == 'nli':
-        def compute_metrics_grouped(eval_preds):
-            import numpy as np
-            preds = eval_preds.predictions
-            # Only call argmax if predictions are logits (2D)
-            if isinstance(preds, np.ndarray) and preds.ndim == 2:
-                preds = np.argmax(preds, axis=1)
-            labels = eval_preds.label_ids
-            # For HANS, group neutral (1) and contradiction (2) as non-entailment (2)
-            if 'hans_eval' in locals() and hans_eval:
-                preds = np.array([0 if p == 0 else 2 for p in preds])
-                labels = np.array([0 if l == 0 else 2 for l in labels])
-            return compute_accuracy(type('EvalPred', (), {'predictions': preds, 'label_ids': labels}))
-        compute_metrics = compute_metrics_grouped
+        if hans_eval:
+            compute_metrics = compute_accuracy_hans
+        compute_metrics = compute_accuracy
 
     # This function wraps the compute_metrics function, storing the model's predictions
     # so that they can be dumped along with the computed metrics
