@@ -3,29 +3,26 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification, Trai
 from transformers.data.data_collator import default_data_collator
 import torch
 import torch.nn.functional as F
-from helpers import prepare_dataset_nli, compute_accuracy
+from helpers import compute_accuracy
 
-# Simple data collator that preserves idx field
-def data_collator_with_idx(features):
-    # Extract idx if present
-    if 'idx' in features[0]:
-        idx_list = [f.pop('idx') for f in features]
-    else:
-        idx_list = None
+NUM_PREPROCESSING_WORKERS = 2
+
+def data_collator_with_hyp(features):
+    """Collate main inputs + separate hypothesis inputs"""
+    # Extract hypothesis-only fields
+    hyp_input_ids = [f.pop('hyp_input_ids') for f in features]
+    hyp_attention_mask = [f.pop('hyp_attention_mask') for f in features]
     
-    # Use default collator for standard fields
+    # Use default collator for main fields
     batch = default_data_collator(features)
     
-    # Add idx back if it existed
-    if idx_list is not None:
-        batch['idx'] = torch.tensor(idx_list, dtype=torch.long)
+    # Add hypothesis fields back as tensors
+    batch['hyp_input_ids'] = torch.tensor(hyp_input_ids, dtype=torch.long)
+    batch['hyp_attention_mask'] = torch.tensor(hyp_attention_mask, dtype=torch.long)
     
     return batch
 
-# Global cache for hypothesis texts
-train_hypotheses = []
-
-# Load the bias model (hypothesis-only)
+# Load the bias model
 bias_model_path = '/content/drive/MyDrive/nli_models/hypothesis_only_model'  # CHANGE THIS
 print(f"Loading bias model from {bias_model_path}...")
 bias_model = AutoModelForSequenceClassification.from_pretrained(bias_model_path)
@@ -33,81 +30,42 @@ bias_model.eval()
 for param in bias_model.parameters():
     param.requires_grad = False
 
-# Custom Trainer
 class DebiasedTrainer(Trainer):
-    def __init__(self, *args, bias_model, bias_weight=1.0, train_hypotheses=None, val_hypotheses=None, **kwargs):
+    def __init__(self, *args, bias_model, bias_weight=1.0, **kwargs):
         super().__init__(*args, **kwargs)
         self.bias_model = bias_model
         self.bias_weight = bias_weight
-        self.train_hypotheses = train_hypotheses
-        self.val_hypotheses = val_hypotheses
         
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         labels = inputs.pop("labels")
-        idx = inputs.pop("idx", None)
-
-        print("INFO: starting compute_loss")
-
-        # DEBUG: Check if idx is actually present
-        if idx is None:
-            print("WARNING: idx is None! Falling back to wrong behavior!")
-            
-        # Get predictions from main model
+        hyp_input_ids = inputs.pop("hyp_input_ids")
+        hyp_attention_mask = inputs.pop("hyp_attention_mask")
+        
+        # Main model: premise + hypothesis
         outputs = model(**inputs)
         main_logits = outputs.logits
         
-        # Move bias model to same device
+        # Move bias model to same device if needed
         if self.bias_model.device != main_logits.device:
             self.bias_model = self.bias_model.to(main_logits.device)
         
-        # Get predictions from bias model (hypothesis-only)
-        if idx is not None:
-            # Determine which hypothesis cache to use based on whether we're training or evaluating
-            # During training, use train_hypotheses; during eval, use val_hypotheses
-            hypotheses_cache = self.train_hypotheses if model.training else self.val_hypotheses
-            
-            if hypotheses_cache is not None:
-                # Look up hypotheses using indices
-                batch_hypotheses = [hypotheses_cache[i.item()] for i in idx]
-                
-                # Tokenize hypothesis-only
-                with torch.no_grad():
-                    hyp_inputs = self.tokenizer(
-                        batch_hypotheses,
-                        truncation=True,
-                        max_length=128,
-                        padding='max_length',
-                        return_tensors='pt'
-                    ).to(main_logits.device)
-                    
-                    bias_outputs = self.bias_model(**hyp_inputs)
-                    bias_logits = bias_outputs.logits
-            else:
-                # Fallback: use same inputs
-                with torch.no_grad():
-                    bias_outputs = self.bias_model(**inputs)
-                    bias_logits = bias_outputs.logits
-        else:
-            # Fallback: use same inputs
-            with torch.no_grad():
-                bias_outputs = self.bias_model(**inputs)
-                bias_logits = bias_outputs.logits
+        # Bias model: hypothesis only (pre-tokenized)
+        with torch.no_grad():
+            bias_logits = self.bias_model(
+                input_ids=hyp_input_ids,
+                attention_mask=hyp_attention_mask
+            ).logits
         
-        
-
         # Product of Experts
         combined_logits = main_logits - self.bias_weight * bias_logits
-
-        # DEBUG: Print these during first few batches
+        loss = F.cross_entropy(combined_logits, labels)
+        
+        # Debug prints for first few steps
         if self.state.global_step < 3:
             print(f"Step {self.state.global_step}")
-            print(f"  idx present: {idx is not None}")
             print(f"  bias_logits[0]: {bias_logits[0].tolist()}")
             print(f"  main_logits[0]: {main_logits[0].tolist()}")
             print(f"  combined_logits[0]: {combined_logits[0].tolist()}")
-            print(f"  label[0]: {labels[0].item()}")
-            
-        loss = F.cross_entropy(combined_logits, labels)
         
         return (loss, outputs) if return_outputs else loss
 
@@ -130,53 +88,47 @@ if hasattr(model, 'electra'):
 print("Preprocessing...")
 dataset = dataset.filter(lambda ex: ex['label'] != -1)
 
-# Cache hypotheses BEFORE adding indices
-print("Caching hypotheses...")
-train_hypotheses = dataset['train']['hypothesis']
-val_hypotheses = dataset['validation']['hypothesis']
-print(f"Cached {len(train_hypotheses)} train hypotheses")
-print(f"Cached {len(val_hypotheses)} validation hypotheses")
+def prepare_both_inputs(examples):
+    """Pre-tokenize both premise+hypothesis AND hypothesis-only"""
+    # Main model inputs: premise + hypothesis
+    main_tok = tokenizer(
+        examples['premise'],
+        examples['hypothesis'],
+        truncation=True,
+        max_length=128,
+        padding='max_length'
+    )
+    
+    # Bias model inputs: hypothesis only
+    hyp_tok = tokenizer(
+        examples['hypothesis'],
+        truncation=True,
+        max_length=128,
+        padding='max_length'
+    )
+    
+    return {
+        'input_ids': main_tok['input_ids'],
+        'attention_mask': main_tok['attention_mask'],
+        'label': examples['label'],
+        'hyp_input_ids': hyp_tok['input_ids'],
+        'hyp_attention_mask': hyp_tok['attention_mask'],
+    }
 
-# Add index field
-print("Adding indices...")
-def add_idx(examples, indices):
-    return {'idx': indices}
-
-dataset['train'] = dataset['train'].map(
-    add_idx,
-    batched=True,
-    with_indices=True
-)
-
-dataset['validation'] = dataset['validation'].map(
-    add_idx,
-    batched=True,
-    with_indices=True
-)
-
-# Tokenize
-print("Tokenizing...")
-def prepare_with_idx(examples):
-    tokenized = prepare_dataset_nli(examples, tokenizer, 128, hypothesis_only=False)
-    tokenized['idx'] = examples['idx']
-    print(f"Tokenized batch with idx: {tokenized['idx'][:5]}")  # Debug print
-    return tokenized
-
+print("Tokenizing train set...")
 train_dataset = dataset['train'].map(
-    prepare_with_idx,
+    prepare_both_inputs,
     batched=True,
-    num_proc=1,  # Also try single process first
-    remove_columns=[c for c in dataset['train'].column_names if c != 'idx']
+    num_proc=NUM_PREPROCESSING_WORKERS,
+    remove_columns=dataset['train'].column_names
 )
 
-# Force the dataset to include idx
-train_dataset.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label', 'idx'])
-
+print("Tokenizing validation set...")
 eval_dataset = dataset['validation'].map(
-    prepare_with_idx,
+    prepare_both_inputs,
     batched=True,
-    num_proc=2,
-    remove_columns=[c for c in dataset['validation'].column_names if c != 'idx']
+    num_proc=NUM_PREPROCESSING_WORKERS,
+    remove_columns=dataset['validation'].column_names
 )
 
 bias_coefficient = 0.5 # Define bias coefficient once
@@ -193,12 +145,11 @@ trainer = DebiasedTrainer(
     train_dataset=train_dataset,
     eval_dataset=eval_dataset,
     tokenizer=tokenizer,
-    data_collator=data_collator_with_idx,  # Custom collator for idx
+    data_collator=data_collator_with_hyp,
     compute_metrics=compute_accuracy,
     bias_model=bias_model,
     bias_weight=bias_coefficient,
-    train_hypotheses=train_hypotheses,
-    val_hypotheses=val_hypotheses
+    logging_steps=10000
 )
 
 print("\nStarting training with proper hypothesis-only debiasing...")
