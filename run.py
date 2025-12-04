@@ -152,7 +152,6 @@ def main():
                 hans_dataset = datasets.load_dataset('SebastiaanBeekman/hans', split='test')
                 # Map SebastiaanBeekman/hans columns to expected NLI columns
                 def map_hans_columns(example):
-                    print("[DEBUG] Raw HANS example:", example)
                     input_str = example['input']
                     # Handle multiline input with 'Premise:' and 'Hypothesis:' on separate lines
                     lines = input_str.splitlines()
@@ -170,8 +169,7 @@ def main():
                     else:
                         label = 0 if ref == 0 else 2
                     return {'premise': premise, 'hypothesis': hypothesis, 'label': label}
-                eval_dataset = hans_dataset.map(map_hans_columns)
-                print("Loaded HANS test set with mapped columns and labels")
+                eval_dataset = hans_dataset.map(map_hans_columns).select(range(750))
             else:
                 # Use the same dataset as training
                 eval_dataset = dataset[eval_split]
