@@ -25,9 +25,13 @@ def data_collator_with_hyp(features):
     # Use default collator for main fields
     batch = default_data_collator(features)
 
-    # Add hypothesis fields back as tensors
-    batch['hyp_input_ids'] = torch.tensor(hyp_input_ids, dtype=torch.long)
-    batch['hyp_attention_mask'] = torch.tensor(hyp_attention_mask, dtype=torch.long)
+    # Use stack for tensors, tensor for lists
+    if isinstance(hyp_input_ids[0], torch.Tensor):
+        batch['hyp_input_ids'] = torch.stack(hyp_input_ids)
+        batch['hyp_attention_mask'] = torch.stack(hyp_attention_mask)
+    else:
+        batch['hyp_input_ids'] = torch.tensor(hyp_input_ids, dtype=torch.long)
+        batch['hyp_attention_mask'] = torch.tensor(hyp_attention_mask, dtype=torch.long)
 
     return batch
 
