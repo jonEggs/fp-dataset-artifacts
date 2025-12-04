@@ -41,6 +41,19 @@ class DebiasedTrainer(Trainer):
         hyp_input_ids = inputs.pop("hyp_input_ids")
         hyp_attention_mask = inputs.pop("hyp_attention_mask")
         
+         # DEBUG: Decode and compare for first few steps
+        if self.state.global_step < 3:
+            for i in range(min(2, len(hyp_input_ids))):  # Check first 2 examples in batch
+                # Decode main model input (premise + hypothesis)
+                main_text = self.tokenizer.decode(inputs['input_ids'][i], skip_special_tokens=True)
+                
+                # Decode bias model input (hypothesis only)
+                hyp_text = self.tokenizer.decode(hyp_input_ids[i], skip_special_tokens=True)
+                
+                print(f"\n=== Step {self.state.global_step}, Example {i} ===")
+                print(f"Main model sees: {main_text}")
+                print(f"Bias model sees: {hyp_text}")
+                print(f"Hypothesis in main? {hyp_text in main_text}")
         # Main model: premise + hypothesis
         outputs = model(**inputs)
         main_logits = outputs.logits
@@ -135,7 +148,7 @@ bias_coefficient = 0.5 # Define bias coefficient once
 training_args = TrainingArguments(
     output_dir=f'/content/drive/MyDrive/nli_models/debiased_model_{bias_coefficient}',
     num_train_epochs=0.1,
-    per_device_train_batch_size=8
+    per_device_train_batch_size=16
 )
 
 print("Initializing trainer...")
