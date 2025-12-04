@@ -207,7 +207,10 @@ def main():
     elif args.task == 'nli':
         def compute_metrics_grouped(eval_preds):
             import numpy as np
-            preds = eval_preds.predictions.argmax(axis=-1) if hasattr(eval_preds, 'predictions') else eval_preds.predictions
+            preds = eval_preds.predictions
+            # Only call argmax if predictions are logits (2D)
+            if isinstance(preds, np.ndarray) and preds.ndim == 2:
+                preds = np.argmax(preds, axis=1)
             labels = eval_preds.label_ids
             # For HANS, group neutral (1) and contradiction (2) as non-entailment (2)
             if 'hans_eval' in locals() and hans_eval:
