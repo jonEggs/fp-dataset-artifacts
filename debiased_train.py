@@ -5,8 +5,6 @@ import torch
 import torch.nn.functional as F
 from helpers import prepare_dataset_nli, compute_accuracy
 
-NUM_PREPROCESSING_WORKERS = 2
-
 # Simple data collator that preserves idx field
 def data_collator_with_idx(features):
     # Extract idx if present
@@ -167,14 +165,17 @@ def prepare_with_idx(examples):
 train_dataset = dataset['train'].map(
     prepare_with_idx,
     batched=True,
-    num_proc=NUM_PREPROCESSING_WORKERS,
+    num_proc=1,  # Also try single process first
     remove_columns=[c for c in dataset['train'].column_names if c != 'idx']
 )
+
+# Force the dataset to include idx
+train_dataset.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label', 'idx'])
 
 eval_dataset = dataset['validation'].map(
     prepare_with_idx,
     batched=True,
-    num_proc=NUM_PREPROCESSING_WORKERS,
+    num_proc=2,
     remove_columns=[c for c in dataset['validation'].column_names if c != 'idx']
 )
 
