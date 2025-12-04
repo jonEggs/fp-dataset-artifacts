@@ -48,6 +48,8 @@ class DebiasedTrainer(Trainer):
         labels = inputs.pop("labels")
         idx = inputs.pop("idx", None)
 
+        print("INFO: starting compute_loss")
+
         # DEBUG: Check if idx is actually present
         if idx is None:
             print("WARNING: idx is None! Falling back to wrong behavior!")
