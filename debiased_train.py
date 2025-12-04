@@ -160,10 +160,10 @@ eval_dataset = dataset['validation'].map(
     remove_columns=[c for c in dataset['validation'].column_names if c != 'idx']
 )
 
-bias_coefficient = 0.75  # Define bias coefficient once
+bias_coefficient = 0.22 # Define bias coefficient once
 training_args = TrainingArguments(
     output_dir=f'./debiased_model_{bias_coefficient}',
-    num_train_epochs=3,
+    num_train_epochs=0.01,
     per_device_train_batch_size=8
 )
 
