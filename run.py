@@ -59,7 +59,7 @@ def main():
     # You need to format the dataset appropriately. For SNLI, you can prepare a file with each line containing one
     # example as follows:
     # {"premise": "Two women are embracing.", "hypothesis": "The sisters are hugging.", "label": 1}
-    if args.dataset.endswith('.json') or args.dataset.endswith('.jsonl'):
+    if args.dataset is not None and (args.dataset.endswith('.json') or args.dataset.endswith('.jsonl')):
         dataset_id = None
         # Load from local json/jsonl file
         dataset = datasets.load_dataset('json', data_files=args.dataset)
