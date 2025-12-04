@@ -54,44 +54,29 @@ class DebiasedTrainer(Trainer):
         hyp_input_ids = inputs.pop("hyp_input_ids")
         hyp_attention_mask = inputs.pop("hyp_attention_mask")
         
-         # DEBUG: Decode and compare for first few steps
-        if self.state.global_step < 3:
-            for i in range(min(2, len(hyp_input_ids))):  # Check first 2 examples in batch
-                # Decode main model input (premise + hypothesis)
-                main_text = self.tokenizer.decode(inputs['input_ids'][i], skip_special_tokens=True)
-                
-                # Decode bias model input (hypothesis only)
-                hyp_text = self.tokenizer.decode(hyp_input_ids[i], skip_special_tokens=True)
-                
-                print(f"\n=== Step {self.state.global_step}, Example {i} ===")
-                print(f"Main model sees: {main_text}")
-                print(f"Bias model sees: {hyp_text}")
-                print(f"Hypothesis in main? {hyp_text in main_text}")
-        # Main model: premise + hypothesis
+        # Main model prediction
         outputs = model(**inputs)
         main_logits = outputs.logits
         
-        # Move bias model to same device if needed
+        # Get bias model's confidence (frozen, no gradients)
         if self.bias_model.device != main_logits.device:
             self.bias_model = self.bias_model.to(main_logits.device)
         
-        # Bias model: hypothesis only (pre-tokenized)
         with torch.no_grad():
             bias_logits = self.bias_model(
                 input_ids=hyp_input_ids,
                 attention_mask=hyp_attention_mask
             ).logits
+            bias_probs = F.softmax(bias_logits, dim=-1)
+            bias_confidence = bias_probs.max(dim=-1)[0]
         
-        # Product of Experts
-        combined_logits = main_logits - self.bias_weight * bias_logits
-        loss = F.cross_entropy(combined_logits, labels)
-        
-        # Debug prints for first few steps
-        if self.state.global_step < 3:
-            print(f"Step {self.state.global_step}")
-            print(f"  bias_logits[0]: {bias_logits[0].tolist()}")
-            print(f"  main_logits[0]: {main_logits[0].tolist()}")
-            print(f"  combined_logits[0]: {combined_logits[0].tolist()}")
+        # Debiased Focal Loss: down-weight high-confidence bias examples
+        bias_weight = self.bias_weight
+        example_weights = (1.0 - bias_confidence) ** bias_weight
+
+        # Compute weighted loss
+        ce_loss = F.cross_entropy(main_logits, labels, reduction='none')
+        loss = (example_weights * ce_loss).mean()
         
         return (loss, outputs) if return_outputs else loss
 
