@@ -202,7 +202,8 @@ def main():
     elif args.task == 'nli':
         if hans_eval:
             compute_metrics = compute_accuracy_hans
-        compute_metrics = compute_accuracy
+        else:
+            compute_metrics = compute_accuracy
 
     # This function wraps the compute_metrics function, storing the model's predictions
     # so that they can be dumped along with the computed metrics
