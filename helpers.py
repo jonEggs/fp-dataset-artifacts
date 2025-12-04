@@ -50,8 +50,22 @@ def compute_accuracy_hans(eval_preds: EvalPrediction):
     preds = np.argmax(eval_preds.predictions, axis=1)
     preds_grouped = np.where(preds == 0, 0, 2)
     labels_grouped = np.where(eval_preds.label_ids == 0, 0, 2)
+
+    # Overall accuracy
+    overall_acc = (preds_grouped == labels_grouped).astype(np.float32).mean().item()
+
+    # Entailment accuracy (label 0)
+    entailment_mask = labels_grouped == 0
+    entailment_acc = (preds_grouped[entailment_mask] == 0).astype(np.float32).mean().item() if np.any(entailment_mask) else float('nan')
+
+    # Non-entailment accuracy (label 2)
+    non_entailment_mask = labels_grouped == 2
+    non_entailment_acc = (preds_grouped[non_entailment_mask] == 2).astype(np.float32).mean().item() if np.any(non_entailment_mask) else float('nan')
+
     return {
-        'accuracy': (preds_grouped == labels_grouped).astype(np.float32).mean().item()
+        'accuracy': overall_acc,
+        'entailment_accuracy': entailment_acc,
+        'non_entailment_accuracy': non_entailment_acc
     }
 
 # This function preprocesses a question answering dataset, tokenizing the question and context text
