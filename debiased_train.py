@@ -169,9 +169,9 @@ eval_dataset.set_format(
     columns=['input_ids', 'attention_mask', 'label', 'hyp_input_ids', 'hyp_attention_mask']
 )
 
-bias_coefficient = 0.3 # Define bias coefficient once
+BIAS_COEFFICIENT = 2.0 # Define how aggressively to downweight examples that hypoth only model is confident on.
 training_args = TrainingArguments(
-    output_dir=f'/content/drive/MyDrive/nli_models/debiased_reweight_model_{bias_coefficient}',
+    output_dir=f'/content/drive/MyDrive/nli_models/debiased_reweight_model_{BIAS_COEFFICIENT}',
     num_train_epochs=1,
     per_device_train_batch_size=32,
     logging_steps=10000,
@@ -188,7 +188,7 @@ trainer = DebiasedTrainer(
     data_collator=data_collator_with_hyp,
     compute_metrics=compute_accuracy,
     bias_model=bias_model,
-    bias_weight=bias_coefficient
+    bias_weight=BIAS_COEFFICIENT
 )
 
 print("\nStarting training with proper hypothesis-only debiasing...")
