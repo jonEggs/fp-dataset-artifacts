@@ -160,8 +160,9 @@ eval_dataset = dataset['validation'].map(
     remove_columns=[c for c in dataset['validation'].column_names if c != 'idx']
 )
 
+bias_coefficient = 0.75  # Define bias coefficient once
 training_args = TrainingArguments(
-    output_dir='./debiased_model',
+    output_dir=f'./debiased_model_{bias_coefficient}',
     num_train_epochs=3,
     per_device_train_batch_size=8
 )
@@ -176,7 +177,7 @@ trainer = DebiasedTrainer(
     data_collator=data_collator_with_idx,  # Custom collator for idx
     compute_metrics=compute_accuracy,
     bias_model=bias_model,
-    bias_weight=0.75,
+    bias_weight=bias_coefficient,
     train_hypotheses=train_hypotheses,
     val_hypotheses=val_hypotheses
 )
