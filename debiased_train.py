@@ -186,7 +186,7 @@ eval_dataset.set_format(
 
 BIAS_CONST = 0.5 # Define how aggressively to downweight examples that hypoth only model is confident on.
 training_args = TrainingArguments(
-    output_dir=f'/content/drive/MyDrive/nli_models/debiased_reweight_model_{BIAS_COEFFICIENT}',
+    output_dir=f'/content/drive/MyDrive/nli_models/debiased_reweight_model_{BIAS_CONST}',
     num_train_epochs=1,
     per_device_train_batch_size=32,
     logging_steps=10000,
@@ -203,7 +203,7 @@ trainer = DebiasedTrainer(
     data_collator=data_collator_with_hyp,
     compute_metrics=compute_accuracy,
     bias_model=bias_model,
-    bias_weight=BIAS_COEFFICIENT
+    bias_weight=BIAS_CONST
 )
 
 print("\nStarting training with proper hypothesis-only debiasing...")
