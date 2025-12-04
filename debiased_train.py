@@ -95,6 +95,11 @@ class DebiasedTrainer(Trainer):
                 bias_outputs = self.bias_model(**inputs)
                 bias_logits = bias_outputs.logits
         
+        
+
+        # Product of Experts
+        combined_logits = main_logits - self.bias_weight * bias_logits
+
         # DEBUG: Print these during first few batches
         if self.state.global_step < 3:
             print(f"Step {self.state.global_step}")
@@ -103,9 +108,7 @@ class DebiasedTrainer(Trainer):
             print(f"  main_logits[0]: {main_logits[0].tolist()}")
             print(f"  combined_logits[0]: {combined_logits[0].tolist()}")
             print(f"  label[0]: {labels[0].item()}")
-
-        # Product of Experts
-        combined_logits = main_logits - self.bias_weight * bias_logits
+            
         loss = F.cross_entropy(combined_logits, labels)
         
         return (loss, outputs) if return_outputs else loss
