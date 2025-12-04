@@ -37,11 +37,12 @@ for param in bias_model.parameters():
 
 # Custom Trainer
 class DebiasedTrainer(Trainer):
-    def __init__(self, *args, bias_model, bias_weight=1.0, train_hypotheses=None, **kwargs):
+    def __init__(self, *args, bias_model, bias_weight=1.0, train_hypotheses=None, val_hypotheses=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.bias_model = bias_model
         self.bias_weight = bias_weight
         self.train_hypotheses = train_hypotheses
+        self.val_hypotheses = val_hypotheses
         
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         labels = inputs.pop("labels")
@@ -56,22 +57,32 @@ class DebiasedTrainer(Trainer):
             self.bias_model = self.bias_model.to(main_logits.device)
         
         # Get predictions from bias model (hypothesis-only)
-        if idx is not None and self.train_hypotheses is not None:
-            # Look up hypotheses using indices
-            batch_hypotheses = [self.train_hypotheses[i.item()] for i in idx]
+        if idx is not None:
+            # Determine which hypothesis cache to use based on whether we're training or evaluating
+            # During training, use train_hypotheses; during eval, use val_hypotheses
+            hypotheses_cache = self.train_hypotheses if model.training else self.val_hypotheses
             
-            # Tokenize hypothesis-only
-            with torch.no_grad():
-                hyp_inputs = self.tokenizer(
-                    batch_hypotheses,
-                    truncation=True,
-                    max_length=128,
-                    padding='max_length',
-                    return_tensors='pt'
-                ).to(main_logits.device)
+            if hypotheses_cache is not None:
+                # Look up hypotheses using indices
+                batch_hypotheses = [hypotheses_cache[i.item()] for i in idx]
                 
-                bias_outputs = self.bias_model(**hyp_inputs)
-                bias_logits = bias_outputs.logits
+                # Tokenize hypothesis-only
+                with torch.no_grad():
+                    hyp_inputs = self.tokenizer(
+                        batch_hypotheses,
+                        truncation=True,
+                        max_length=128,
+                        padding='max_length',
+                        return_tensors='pt'
+                    ).to(main_logits.device)
+                    
+                    bias_outputs = self.bias_model(**hyp_inputs)
+                    bias_logits = bias_outputs.logits
+            else:
+                # Fallback: use same inputs
+                with torch.no_grad():
+                    bias_outputs = self.bias_model(**inputs)
+                    bias_logits = bias_outputs.logits
         else:
             # Fallback: use same inputs
             with torch.no_grad():
@@ -103,10 +114,12 @@ if hasattr(model, 'electra'):
 print("Preprocessing...")
 dataset = dataset.filter(lambda ex: ex['label'] != -1)
 
-# Cache hypotheses BEFORE filtering/mapping
+# Cache hypotheses BEFORE adding indices
 print("Caching hypotheses...")
 train_hypotheses = dataset['train']['hypothesis']
-print(f"Cached {len(train_hypotheses)} hypotheses")
+val_hypotheses = dataset['validation']['hypothesis']
+print(f"Cached {len(train_hypotheses)} train hypotheses")
+print(f"Cached {len(val_hypotheses)} validation hypotheses")
 
 # Add index field
 print("Adding indices...")
@@ -119,11 +132,18 @@ dataset['train'] = dataset['train'].map(
     with_indices=True
 )
 
+dataset['validation'] = dataset['validation'].map(
+    add_idx,
+    batched=True,
+    with_indices=True
+)
+
 # Tokenize
 print("Tokenizing...")
 def prepare_with_idx(examples):
     tokenized = prepare_dataset_nli(examples, tokenizer, 128, hypothesis_only=False)
     tokenized['idx'] = examples['idx']
+    print(f"Tokenized batch with idx: {tokenized['idx'][:5]}")  # Debug print
     return tokenized
 
 train_dataset = dataset['train'].map(
@@ -134,10 +154,10 @@ train_dataset = dataset['train'].map(
 )
 
 eval_dataset = dataset['validation'].map(
-    lambda exs: prepare_dataset_nli(exs, tokenizer, 128, hypothesis_only=False),
+    prepare_with_idx,
     batched=True,
     num_proc=NUM_PREPROCESSING_WORKERS,
-    remove_columns=dataset['validation'].column_names
+    remove_columns=[c for c in dataset['validation'].column_names if c != 'idx']
 )
 
 training_args = TrainingArguments(
@@ -156,8 +176,9 @@ trainer = DebiasedTrainer(
     data_collator=data_collator_with_idx,  # Custom collator for idx
     compute_metrics=compute_accuracy,
     bias_model=bias_model,
-    bias_weight=1.0,
-    train_hypotheses=train_hypotheses
+    bias_weight=0.75,
+    train_hypotheses=train_hypotheses,
+    val_hypotheses=val_hypotheses
 )
 
 print("\nStarting training with proper hypothesis-only debiasing...")
