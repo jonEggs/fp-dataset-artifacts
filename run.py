@@ -169,7 +169,7 @@ def main():
                     else:
                         label = 0 if ref == 0 else 2
                     return {'premise': premise, 'hypothesis': hypothesis, 'label': label}
-                eval_dataset = hans_dataset.map(map_hans_columns).select(range(2100))
+                eval_dataset = hans_dataset.map(map_hans_columns).select(range(10000))
             else:
                 # Use the same dataset as training
                 eval_dataset = dataset[eval_split]
