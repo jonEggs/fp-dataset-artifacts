@@ -124,32 +124,46 @@ def main():
             remove_columns=train_dataset.column_names
         )
     if training_args.do_eval:
-        # Check if we should use ANLI for evaluation
-        if args.eval_dataset is not None and args.eval_dataset.startswith('anli'):
-            print(f"Loading ANLI evaluation dataset: {args.eval_dataset}")
-            parts = args.eval_dataset.split(':')
-            anli_dataset = datasets.load_dataset('facebook/anli')
-            
-            if len(parts) == 1:
-                # Load all ANLI rounds combined
-                from datasets import Dataset
-                eval_dataset = datasets.concatenate_datasets([
-                    anli_dataset['test_r1'],  # type: ignore
-                    anli_dataset['test_r2'],  # type: ignore
-                    anli_dataset['test_r3']   # type: ignore
-                ])
-                print("Loaded ANLI test sets (all rounds combined)")
-            elif len(parts) == 2 and parts[1] in ['r1', 'r2', 'r3']:
-                # Load specific round
-                round_num = parts[1]
-                eval_dataset = anli_dataset[f'test_{round_num}']
-                print(f"Loaded ANLI test set (round {round_num})")
+        hans_eval = False
+        if args.eval_dataset is not None:
+            if args.eval_dataset.startswith('anli'):
+                print(f"Loading ANLI evaluation dataset: {args.eval_dataset}")
+                parts = args.eval_dataset.split(':')
+                anli_dataset = datasets.load_dataset('facebook/anli')
+                if len(parts) == 1:
+                    # Load all ANLI rounds combined
+                    from datasets import Dataset
+                    eval_dataset = datasets.concatenate_datasets([
+                        anli_dataset['test_r1'],  # type: ignore
+                        anli_dataset['test_r2'],  # type: ignore
+                        anli_dataset['test_r3']   # type: ignore
+                    ])
+                    print("Loaded ANLI test sets (all rounds combined)")
+                elif len(parts) == 2 and parts[1] in ['r1', 'r2', 'r3']:
+                    # Load specific round
+                    round_num = parts[1]
+                    eval_dataset = anli_dataset[f'test_{round_num}']
+                    print(f"Loaded ANLI test set (round {round_num})")
+                else:
+                    raise ValueError(f"Invalid ANLI specification: {args.eval_dataset}. Use 'anli', 'anli:r1', 'anli:r2', or 'anli:r3'")
+            elif args.eval_dataset == 'hans':
+                hans_eval = True
+                print("Loading HANS evaluation dataset")
+                hans_dataset = datasets.load_dataset('hans', split='validation')
+                # HANS labels: entailment (0), non-entailment (1)
+                # Map HANS labels to SNLI-style: 0=entailment, 2=contradiction (non-entailment)
+                def map_hans_labels(example):
+                    mapped = dict(example)
+                    mapped['label'] = 0 if example['label'] == 0 else 2
+                    return mapped
+                eval_dataset = hans_dataset.map(map_hans_labels)
+                print("Loaded HANS validation set with mapped labels")
             else:
-                raise ValueError(f"Invalid ANLI specification: {args.eval_dataset}. Use 'anli', 'anli:r1', 'anli:r2', or 'anli:r3'")
+                # Use the same dataset as training
+                eval_dataset = dataset[eval_split]
         else:
             # Use the same dataset as training
             eval_dataset = dataset[eval_split]
-        
         if args.max_eval_samples:
             eval_dataset = eval_dataset.select(range(args.max_eval_samples))
         eval_dataset_featurized = eval_dataset.map(
@@ -174,8 +188,16 @@ def main():
         compute_metrics = lambda eval_preds: metric.compute(
             predictions=eval_preds.predictions, references=eval_preds.label_ids)
     elif args.task == 'nli':
-        compute_metrics = compute_accuracy
-    
+        def compute_metrics_grouped(eval_preds):
+            import numpy as np
+            preds = eval_preds.predictions.argmax(axis=-1) if hasattr(eval_preds, 'predictions') else eval_preds.predictions
+            labels = eval_preds.label_ids
+            # For HANS, group neutral (1) and contradiction (2) as non-entailment (2)
+            if 'hans_eval' in locals() and hans_eval:
+                preds = np.array([0 if p == 0 else 2 for p in preds])
+                labels = np.array([0 if l == 0 else 2 for l in labels])
+            return compute_accuracy(type('EvalPred', (), {'predictions': preds, 'label_ids': labels}))
+        compute_metrics = compute_metrics_grouped
 
     # This function wraps the compute_metrics function, storing the model's predictions
     # so that they can be dumped along with the computed metrics
