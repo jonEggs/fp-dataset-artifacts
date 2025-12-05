@@ -206,7 +206,6 @@ training_args = TrainingArguments(
     output_dir=f'/content/drive/MyDrive/nli_models/debiased_poe_model_{args.bias_const}',
     num_train_epochs=3,
     per_device_train_batch_size=32,
-    logging_steps=10000,
     save_steps=10000,
     remove_unused_columns=False
 )
