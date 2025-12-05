@@ -207,6 +207,7 @@ training_args = TrainingArguments(
     num_train_epochs=3,
     per_device_train_batch_size=32,
     save_steps=10000,
+    learning_rate=1e-5,
     remove_unused_columns=False
 )
 
