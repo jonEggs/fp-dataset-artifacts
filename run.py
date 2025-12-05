@@ -234,23 +234,15 @@ def main():
         #   and https://huggingface.co/transformers/main_classes/callback.html#transformers.TrainerCallback
 
     if training_args.do_eval:
+
         results = trainer.evaluate(**eval_kwargs)
-
-        # To add custom metrics, you should replace the "compute_metrics" function (see comments above).
-        #
-        # If you want to change how predictions are computed, you should subclass Trainer and override the "prediction_step"
-        # method (see https://huggingface.co/transformers/_modules/transformers/trainer.html#Trainer.prediction_step).
-        # If you do this your custom prediction_step should probably start by calling super().prediction_step and modifying the
-        # values that it returns.
-
         print('Evaluation results:')
         print(results)
-
         os.makedirs(training_args.output_dir, exist_ok=True)
-
         with open(os.path.join(training_args.output_dir, 'eval_metrics.json'), encoding='utf-8', mode='w') as f:
             json.dump(results, f)
 
+        # Save all predictions as before
         with open(os.path.join(training_args.output_dir, 'eval_predictions.jsonl'), encoding='utf-8', mode='w') as f:
             if args.task == 'qa':
                 predictions_by_id = {pred['id']: pred['prediction_text'] for pred in eval_predictions.predictions}
@@ -266,6 +258,63 @@ def main():
                     example_with_prediction['predicted_label'] = int(eval_predictions.predictions[i].argmax())
                     f.write(json.dumps(example_with_prediction))
                     f.write('\n')
+
+        # For SNLI/NLI: Print and save 100 right and 100 wrong answers
+        if args.task == 'nli':
+            if hans_eval:
+                hans_correct = []
+                for i, example in enumerate(eval_dataset):
+                    pred_label = int(eval_predictions.predictions[i].argmax())
+                    # HANS labels are grouped: 0 = entailment, 2 = non-entailment
+                    true_label = example['label']
+                    record = {
+                        'premise': example.get('premise', ''),
+                        'hypothesis': example.get('hypothesis', ''),
+                        'true_label': true_label,
+                        'predicted_label': pred_label,
+                        'predicted_scores': eval_predictions.predictions[i].tolist()
+                    }
+                    if pred_label == true_label and len(hans_correct) < 100:
+                        hans_correct.append(record)
+                    if len(hans_correct) >= 100:
+                        break
+                print("\nFirst 5 correct HANS predictions:")
+                for ex in hans_correct[:5]:
+                    print(json.dumps(ex, indent=2))
+                hans_save_path = os.path.join(training_args.output_dir, 'hans_correct_100.json')
+                with open(hans_save_path, 'w', encoding='utf-8') as f:
+                    json.dump({'correct': hans_correct}, f, ensure_ascii=False, indent=2)
+                print(f"Saved 100 correct HANS predictions to {hans_save_path}")
+            else:
+                correct = []
+                wrong = []
+                for i, example in enumerate(eval_dataset):
+                    pred_label = int(eval_predictions.predictions[i].argmax())
+                    true_label = example['label']
+                    record = {
+                        'premise': example.get('premise', ''),
+                        'hypothesis': example.get('hypothesis', ''),
+                        'true_label': true_label,
+                        'predicted_label': pred_label,
+                        'predicted_scores': eval_predictions.predictions[i].tolist()
+                    }
+                    if pred_label == true_label and len(correct) < 100:
+                        correct.append(record)
+                    elif pred_label != true_label and len(wrong) < 100:
+                        wrong.append(record)
+                    if len(correct) >= 100 and len(wrong) >= 100:
+                        break
+                print("\nFirst 5 correct predictions:")
+                for ex in correct[:5]:
+                    print(json.dumps(ex, indent=2))
+                print("\nFirst 5 wrong predictions:")
+                for ex in wrong[:5]:
+                    print(json.dumps(ex, indent=2))
+                # Save to JSON for Colab/Google Drive
+                save_path = os.path.join(training_args.output_dir, 'snli_right_wrong_100.json')
+                with open(save_path, 'w', encoding='utf-8') as f:
+                    json.dump({'right': correct, 'wrong': wrong}, f, ensure_ascii=False, indent=2)
+                print(f"Saved 100 right and 100 wrong SNLI predictions to {save_path}")
 
 
 if __name__ == "__main__":
