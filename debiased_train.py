@@ -59,6 +59,8 @@ class DebiasedTrainer(Trainer):
         labels = inputs.pop("labels")
         hyp_input_ids = inputs.pop("hyp_input_ids")
         hyp_attention_mask = inputs.pop("hyp_attention_mask")
+
+        print("BIAS WEIGHT:", self.bias_weight)
         
         outputs = model(**inputs)
         main_logits = outputs.logits
