@@ -288,20 +288,30 @@ def main():
             else:
                 correct = []
                 wrong = []
+                label_counts = {0: 0, 1: 0, 2: 0}
+                label_correct = {0: 0, 1: 0, 2: 0}
                 for i, example in enumerate(eval_dataset):
                     pred_label = int(eval_predictions.predictions[i].argmax())
                     true_label = example['label']
-                    record = {
-                        'premise': example.get('premise', ''),
-                        'hypothesis': example.get('hypothesis', ''),
-                        'true_label': true_label,
-                        'predicted_label': pred_label,
-                        'predicted_scores': eval_predictions.predictions[i].tolist()
-                    }
-                    if pred_label == true_label and len(correct) < 100:
-                        correct.append(record)
-                    elif pred_label != true_label and len(wrong) < 100:
-                        wrong.append(record)
+                    label_counts[true_label] += 1
+                    if pred_label == true_label:
+                        label_correct[true_label] += 1
+                        if len(correct) < 100:
+                            correct.append({
+                                'premise': example.get('premise', ''),
+                                'hypothesis': example.get('hypothesis', ''),
+                                'true_label': true_label,
+                                'predicted_label': pred_label,
+                                'predicted_scores': eval_predictions.predictions[i].tolist()
+                            })
+                    elif len(wrong) < 100:
+                        wrong.append({
+                            'premise': example.get('premise', ''),
+                            'hypothesis': example.get('hypothesis', ''),
+                            'true_label': true_label,
+                            'predicted_label': pred_label,
+                            'predicted_scores': eval_predictions.predictions[i].tolist()
+                        })
                     if len(correct) >= 100 and len(wrong) >= 100:
                         break
                 print("\nFirst 5 correct predictions:")
@@ -310,10 +320,24 @@ def main():
                 print("\nFirst 5 wrong predictions:")
                 for ex in wrong[:5]:
                     print(json.dumps(ex, indent=2))
+                # Print per-label accuracy
+                print("\nSNLI Per-label accuracy:")
+                label_names = {0: 'entailment', 1: 'neutral', 2: 'contradiction'}
+                for label in [0, 1, 2]:
+                    total = label_counts[label]
+                    correct_n = label_correct[label]
+                    acc = (correct_n / total * 100) if total > 0 else 0.0
+                    print(f"  {label_names[label]}: {correct_n}/{total} = {acc:.2f}%")
                 # Save to JSON for Colab/Google Drive
                 save_path = os.path.join(training_args.output_dir, 'snli_right_wrong_100.json')
                 with open(save_path, 'w', encoding='utf-8') as f:
-                    json.dump({'right': correct, 'wrong': wrong}, f, ensure_ascii=False, indent=2)
+                    json.dump({'right': correct, 'wrong': wrong, 'per_label_accuracy': {
+                        label_names[label]: {
+                            'correct': label_correct[label],
+                            'total': label_counts[label],
+                            'accuracy': (label_correct[label] / label_counts[label] * 100) if label_counts[label] > 0 else 0.0
+                        } for label in [0, 1, 2]
+                    }}, f, ensure_ascii=False, indent=2)
                 print(f"Saved 100 right and 100 wrong SNLI predictions to {save_path}")
 
 
