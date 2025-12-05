@@ -312,8 +312,6 @@ def main():
                             'predicted_label': pred_label,
                             'predicted_scores': eval_predictions.predictions[i].tolist()
                         })
-                    if len(correct) >= 100 and len(wrong) >= 100:
-                        break
                 print("\nFirst 5 correct predictions:")
                 for ex in correct[:5]:
                     print(json.dumps(ex, indent=2))
@@ -321,7 +319,7 @@ def main():
                 for ex in wrong[:5]:
                     print(json.dumps(ex, indent=2))
                 # Print per-label accuracy
-                print("\nSNLI Per-label accuracy:")
+                print("\nSNLI Per-label accuracy (whole dataset):")
                 label_names = {0: 'entailment', 1: 'neutral', 2: 'contradiction'}
                 for label in [0, 1, 2]:
                     total = label_counts[label]
