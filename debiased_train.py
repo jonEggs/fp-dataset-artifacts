@@ -60,11 +60,9 @@ class DebiasedTrainer(Trainer):
         hyp_input_ids = inputs.pop("hyp_input_ids")
         hyp_attention_mask = inputs.pop("hyp_attention_mask")
         
-        # Main model prediction
         outputs = model(**inputs)
         main_logits = outputs.logits
         
-        # Get bias model's confidence (frozen, no gradients)
         if self.bias_model.device != main_logits.device:
             self.bias_model = self.bias_model.to(main_logits.device)
         
@@ -73,30 +71,45 @@ class DebiasedTrainer(Trainer):
                 input_ids=hyp_input_ids,
                 attention_mask=hyp_attention_mask
             ).logits
-            bias_probs = F.softmax(bias_logits, dim=-1)
-            bias_confidence = bias_probs.max(dim=-1)[0]
         
-        # Debiased Focal Loss: down-weight high-confidence bias examples
-        bias_weight = self.bias_weight
-        example_weights = (1.0 - bias_confidence) ** bias_weight
-
+        # PoE: subtract bias log-probs
+        bias_log_probs = F.log_softmax(bias_logits, dim=-1)
+        debiased_logits = main_logits - self.bias_weight * bias_log_probs
+        loss = F.cross_entropy(debiased_logits, labels)
         
-        # Compute weighted loss
-        ce_loss = F.cross_entropy(main_logits, labels, reduction='none')
-        loss = (example_weights * ce_loss).mean()
+        if self.state.global_step % 2000 == 0:
+            with torch.no_grad():
+                # Predictions from each
+                main_preds = main_logits.argmax(dim=-1)
+                bias_preds = bias_logits.argmax(dim=-1)
+                debiased_preds = debiased_logits.argmax(dim=-1)
+                
+                # Accuracies
+                main_acc = (main_preds == labels).float().mean()
+                bias_acc = (bias_preds == labels).float().mean()
+                debiased_acc = (debiased_preds == labels).float().mean()
+                
+                # Agreement: is main model just copying bias model?
+                main_bias_agree = (main_preds == bias_preds).float().mean()
+                
+                # How often does PoE change the prediction?
+                poe_flips = (main_preds != debiased_preds).float().mean()
+                
+                # How often does PoE flip to correct answer?
+                main_wrong = (main_preds != labels)
+                debiased_right = (debiased_preds == labels)
+                poe_saves = (main_wrong & debiased_right).float().mean()
+                
+                # Loss comparison
+                main_loss = F.cross_entropy(main_logits, labels)
+                
+                print(f"\n=== Step {self.state.global_step} ===")
+                print(f"Batch accuracy  - Main: {main_acc:.1%}, Bias: {bias_acc:.1%}, Debiased: {debiased_acc:.1%}")
+                print(f"Main-Bias agreement: {main_bias_agree:.1%} (lower is better - means main learned something different)")
+                print(f"PoE flips prediction: {poe_flips:.1%}")
+                print(f"PoE saves (wrong→right): {poe_saves:.1%}")
+                print(f"Loss - PoE: {loss.item():.4f}, Main only: {main_loss.item():.4f}")
         
-        # Right before computing loss, add:
-        if self.state.global_step % 2000 == 0:  # Log every 100 steps
-            print(f"\n=== Step {self.state.global_step} ===")
-            print(f"Bias confidence - Min: {bias_confidence.min():.3f}, "
-                f"Mean: {bias_confidence.mean():.3f}, Max: {bias_confidence.max():.3f}")
-            print(f"Example weights - Min: {example_weights.min():.3f}, "
-                f"Mean: {example_weights.mean():.3f}, Max: {example_weights.max():.3f}")
-            print(f"% heavily downweighted (<0.1): {(example_weights < 0.1).float().mean():.1%}")
-            print(f"Weighted loss: {loss.item():.4f}")
-            unweighted_loss = ce_loss.mean()
-            print(f"UNWEIGHTED loss: {unweighted_loss.item():.4f}")
-
         return (loss, outputs) if return_outputs else loss
 
 # Main training
@@ -190,7 +203,7 @@ eval_dataset.set_format(
 
 
 training_args = TrainingArguments(
-    output_dir=f'/content/drive/MyDrive/nli_models/debiased_reweight_model_{args.bias_const}',
+    output_dir=f'/content/drive/MyDrive/nli_models/debiased_poe_model_{args.bias_const}',
     num_train_epochs=3,
     per_device_train_batch_size=32,
     logging_steps=10000,
