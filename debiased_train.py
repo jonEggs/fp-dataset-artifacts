@@ -105,7 +105,7 @@ class DebiasedTrainer(Trainer):
                 
                 print(f"\n=== Step {self.state.global_step} ===")
                 print(f"Batch accuracy  - Main: {main_acc:.1%}, Bias: {bias_acc:.1%}, Debiased: {debiased_acc:.1%}")
-                print(f"Main-Bias agreement: {main_bias_agree:.1%} (lower is better - means main learned something different)")
+                print(f"Main-Bias agreement: {main_bias_agree:.1%}")
                 print(f"PoE flips prediction: {poe_flips:.1%}")
                 print(f"PoE saves (wrong→right): {poe_saves:.1%}")
                 print(f"Loss - PoE: {loss.item():.4f}, Main only: {main_loss.item():.4f}")
